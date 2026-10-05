@@ -27,6 +27,7 @@ import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.OpenOption;
 import java.util.Calendar;
 import java.util.Collection;
+import java.util.List;
 import org.apache.commons.net.ProtocolCommandEvent;
 import org.apache.commons.net.ProtocolCommandListener;
 import org.apache.commons.net.ftp.FTPClient;
@@ -232,15 +233,29 @@ final class FTPClientPool {
             }
         }
 
-        @SuppressWarnings("resource")
-        InputStream newInputStream(FTPPath path, OpenOptions options) throws IOException {
-            assert options.read;
+        Collection<OpenOption> transferOptions() {
+            return List.of(fileType, fileStructure, fileTransferMode);
+        }
 
-            boolean deleteOnClose = options.deleteOnClose;
+        InputStream newInputStream(FTPPath path, OpenOptions options) throws IOException {
+            return newInputStream(path, options, 0, options.deleteOnClose);
+        }
+
+        @SuppressWarnings("resource")
+        InputStream newInputStream(FTPPath path, OpenOptions options, long offset, boolean deleteOnClose) throws IOException {
+            assert options.read;
 
             applyTransferOptions(options);
 
-            InputStream in = ftpClient.retrieveFileStream(path.path());
+            // commons-net only clears the offset when it sends REST;
+            // clear it anyway so an earlier failure can't apply it to a later transfer
+            ftpClient.setRestartOffset(offset);
+            InputStream in;
+            try {
+                in = ftpClient.retrieveFileStream(path.path());
+            } finally {
+                ftpClient.setRestartOffset(0);
+            }
             if (in == null) {
                 throw exceptionFactory.createNewInputStreamException(path.path(), ftpClient.getReplyCode(), ftpClient.getReplyString());
             }
