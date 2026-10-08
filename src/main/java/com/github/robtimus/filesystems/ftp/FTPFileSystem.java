@@ -34,11 +34,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.URI;
-import java.nio.ByteBuffer;
-import java.nio.channels.Channels;
-import java.nio.channels.ClosedChannelException;
-import java.nio.channels.NonWritableChannelException;
-import java.nio.channels.ReadableByteChannel;
 import java.nio.channels.SeekableByteChannel;
 import java.nio.file.AccessDeniedException;
 import java.nio.file.AccessMode;
@@ -337,11 +332,7 @@ class FTPFileSystem extends FileSystem {
             if (openOptions.read) {
                 // use findRealFTPFile instead of toRealPath, to let the opening of the stream provide the correct error message
                 FTPFile ftpFile = findRealFTPFile(client, normalizedPath);
-                // the channel deletes the file itself, as seeking closes the stream
-                InputStream in = client.newInputStream(normalizedPath, openOptions, 0, false);
-                // later downloads may use other clients, so give them the transfer options of this one
-                OpenOptions downloadOptions = OpenOptions.forNewInputStream(client.transferOptions());
-                return new FTPPathReadChannel(normalizedPath, downloadOptions, openOptions.deleteOnClose, in, ftpFile);
+                return client.newReadableByteChannel(normalizedPath, openOptions, ftpFile);
             }
 
             // if append then we need the FTP file, to find the initial position of the channel
@@ -349,125 +340,6 @@ class FTPFileSystem extends FileSystem {
             FTPFileAndOutputStreamPair outPair = newOutputStream(client, normalizedPath, requireFTPFile, openOptions);
             long initialPosition = outPair.ftpFile == null ? 0 : outPair.ftpFile.getSize();
             return FileSystemProviderSupport.createSeekableByteChannel(outPair.out, initialPosition);
-        }
-    }
-
-    private final class FTPPathReadChannel implements SeekableByteChannel {
-
-        private final FTPPath path;
-        private final OpenOptions downloadOptions;
-        private final boolean deleteOnClose;
-        private final long size;
-        private final boolean sizeKnown;
-
-        private ReadableByteChannel download;
-        private boolean downloadFinished;
-        private long position;
-        private boolean open = true;
-
-        private FTPPathReadChannel(FTPPath path, OpenOptions downloadOptions, boolean deleteOnClose, InputStream in, FTPFile ftpFile) {
-            this.path = path;
-            this.downloadOptions = downloadOptions;
-            this.deleteOnClose = deleteOnClose;
-            // a size that isn't listed is -1
-            this.size = ftpFile == null ? 0 : Math.max(ftpFile.getSize(), 0);
-            this.sizeKnown = ftpFile != null && ftpFile.isFile() && ftpFile.getSize() >= 0;
-            this.download = Channels.newChannel(in);
-        }
-
-        @Override
-        public synchronized boolean isOpen() {
-            return open;
-        }
-
-        @Override
-        public synchronized void close() throws IOException {
-            if (open) {
-                open = false;
-                closeDownload();
-                if (deleteOnClose) {
-                    try (Client client = clientPool.get()) {
-                        client.delete(path, false);
-                    }
-                }
-            }
-        }
-
-        @Override
-        public synchronized int read(ByteBuffer dst) throws IOException {
-            checkOpen();
-            if (download == null) {
-                if (sizeKnown && position >= size) {
-                    return -1;
-                }
-                try (Client client = clientPool.get()) {
-                    download = Channels.newChannel(client.newInputStream(path, downloadOptions, position, false));
-                }
-            }
-            int read = download.read(dst);
-            if (read == -1) {
-                downloadFinished = true;
-            } else {
-                position += read;
-            }
-            return read;
-        }
-
-        @Override
-        public int write(ByteBuffer src) throws IOException {
-            throw new NonWritableChannelException();
-        }
-
-        @Override
-        public synchronized long position() throws IOException {
-            return position;
-        }
-
-        @Override
-        public synchronized SeekableByteChannel position(long newPosition) throws IOException {
-            checkOpen();
-            if (newPosition < 0) {
-                throw new IllegalArgumentException(newPosition + " < 0"); //$NON-NLS-1$
-            }
-            if (newPosition != position) {
-                closeDownload();
-                position = newPosition;
-            }
-            return this;
-        }
-
-        @Override
-        public long size() throws IOException {
-            return size;
-        }
-
-        @Override
-        public SeekableByteChannel truncate(long size) throws IOException {
-            throw Messages.unsupportedOperation(SeekableByteChannel.class, "truncate"); //$NON-NLS-1$
-        }
-
-        private void checkOpen() throws ClosedChannelException {
-            if (!open) {
-                throw new ClosedChannelException();
-            }
-        }
-
-        private void closeDownload() throws IOException {
-            if (download == null) {
-                return;
-            }
-            try {
-                download.close();
-            } catch (FTPFileSystemException e) {
-                // Servers acknowledge an aborted download with one reply whose code varies, e.g. 426, or 150 for pure-ftpd.
-                // Only the reply to a download that was read to its end tells whether the transfer succeeded.
-                if (downloadFinished) {
-                    throw e;
-                }
-            } finally {
-                download = null;
-                downloadFinished = false;
-            }
         }
     }
 

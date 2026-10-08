@@ -318,7 +318,7 @@ public class FTPFileSystemProvider extends FileSystemProvider {
      * {@link FileStructure#FILE file} structure and {@link FileTransferMode#STREAM stream} transfer mode. Channels opened for writing do not support
      * seeking or truncating.
      * <p>
-     * Note: while the returned channel is not closed, the path's file system may have one available connection fewer.
+     * Note: while the returned channel is not closed, the path's file system will have one available connection fewer.
      * It is therefore essential that the channel is closed as soon as possible.
      */
     @Override

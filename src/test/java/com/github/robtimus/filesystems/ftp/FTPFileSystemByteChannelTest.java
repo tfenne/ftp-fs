@@ -186,19 +186,6 @@ class FTPFileSystemByteChannelTest {
         }
 
         @Test
-        void testSeekKeepsTransferOptionsOfFirstDownload() throws IOException {
-            addFile("/foo").setContents("Hello\r\nWorld");
-            addFile("/bar").setContents("Lorem ipsum");
-
-            try (SeekableByteChannel channel = newByteChannel()) {
-                channel.position(5);
-                // leave the file system's only client in ASCII mode, in which it converts CRLF to LF
-                provider().newInputStream(createPath("/bar"), FileType.ascii()).close();
-                assertEquals("\r\nWorld", read(channel, 1024));
-            }
-        }
-
-        @Test
         void testNegativePositionIsRejected() throws IOException {
             addFile("/foo").setContents("Hello World");
 
